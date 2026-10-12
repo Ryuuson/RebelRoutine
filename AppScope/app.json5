@@ -1,0 +1,11 @@
+{
+  "app": {
+    "bundleName": "com.rebelroutine.habit",
+    "vendor": "RebelRoutine",
+    "versionCode": 1000000,
+    "versionName": "1.0.0",
+    "buildVersion": "1",
+    "label": "$string:app_name",
+    "icon": "$media:app_icon_p5"
+  }
+}

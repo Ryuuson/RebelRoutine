@@ -1,0 +1,1 @@
+# Add ArkGuard rules here before preparing a release build.

@@ -1,0 +1,84 @@
+// Execute real note commands/controllers, backup validation and snapshot mutations.
+const assert=require('assert/strict');
+const {subject,load}=require('./load_07_handlers.cjs');
+const {NoteCommands:C}=load('data/NoteCommands'),{NoteQueries:Q}=load('data/NoteQueries');
+const E=require('./verify_m1.cjs');
+const plain=value=>JSON.parse(JSON.stringify(value));
+const app=subject();
+const business=state=>JSON.stringify({habits:state.habits,actions:state.actions,traits:state.traitTotals,m2:state.m2});
+(async()=>{
+  const old=app.snapshot();delete old.notes;
+  assert.equal(E.validate(old).notes,undefined);
+  let state=C.save(old,-1,'','今天的小发现\n第二行',undefined,-1,100);
+  assert.equal(state.notes[0].title,'今天的小发现');assert.equal(state.notes[0].body,'今天的小发现\n第二行');
+  assert.equal(old.notes,undefined);assert.equal(business(old),business(state));
+  state=C.save(state,-1,'只写标题','',undefined,-1,100);assert.equal(new Set(state.notes.map(n=>n.id)).size,2);
+  assert.equal(state.notes[1].id,101);
+  assert.throws(()=>C.save(state,-1,' ','\n ',undefined,-1,110));
+  assert.throws(()=>C.save(state,-1,'x'.repeat(121),'',undefined,-1,110));
+  assert.throws(()=>C.save(state,-1,'正文过长','x'.repeat(100001),undefined,-1,110));
+  assert.throws(()=>C.save(state,999,'不存在','',undefined,100,110));
+  const edited=C.save(state,100,'修改','保留换行\n正文',undefined,100,99);
+  assert.equal(edited.notes[0].createdAt,100);assert.equal(edited.notes[0].updatedAt,101);
+  assert.throws(()=>C.save(edited,100,'旧稿覆盖','',undefined,100,120));
+  const deleted=C.lifecycle(edited,100,'delete',120);
+  assert.equal(Q.list(deleted,undefined,'全部','').length,1);
+  assert.equal(Q.list(deleted,undefined,'回收站','正文').length,1);
+  assert.throws(()=>C.save(deleted,100,'已删除','',undefined,deleted.notes[0].updatedAt,121));
+  assert.throws(()=>C.lifecycle(deleted,101,'purge',130));
+  const restored=C.lifecycle(deleted,100,'restore',130);assert.equal(restored.notes[0].deletedAt,undefined);
+  const purged=C.lifecycle(deleted,100,'purge',130);assert.equal(purged.notes.length,1);
+  assert.throws(()=>C.lifecycle(restored,100,'archive',140));
+  const links=E.clone(old);links.habits=[{id:7,title:'电路复习',subtitle:'',done:false}];
+  links.actions=[{id:7,text:'旧行动',summary:'',traits:[],createdAt:1}];
+  const link=Q.resolve(links,'habit',7);assert.equal(link.title,'电路复习');
+  let linked=C.save(links,-1,'复习思路','先理清原理',link,-1,200);
+  linked=C.save(linked,-1,'第二条','下次带上教材',link,-1,200);
+  linked=C.save(linked,-1,'旧行动便签','不同来源同号',Q.resolve(linked,'action',7),-1,200);
+  assert.equal(Q.list(linked,link,'全部','').length,2);
+  assert.equal(Q.list(linked,undefined,'关联','教材').length,1);
+  assert.equal(Q.list(linked,undefined,'随笔','').length,0);
+  assert.equal(Q.targets(linked,'复习').length,1);
+  const renamed=E.clone(linked);renamed.habits[0].title='新的事项名称';
+  assert.ok(Q.label(renamed,link).includes('新的事项名称'));
+  assert.equal(Q.list(renamed,undefined,'全部','新的事项名称').length,2);
+  const missing=E.lifecycle(E.lifecycle(linked,7,'delete'),7,'purge');
+  assert.equal(missing.notes.length,3);assert.ok(Q.label(missing,link).includes('已删除或不存在'));
+  assert.throws(()=>C.save(missing,-1,'新关联','',link,-1,220));
+  const kept=C.save(missing,200,'继续写','事项没了也保留',link,200,220);
+  assert.equal(kept.notes[0].link.id,7);
+  const detached=C.save(kept,200,'随笔','解除关联',undefined,220,230);
+  assert.equal(detached.notes[0].link,undefined);assert.equal(Q.list(detached,undefined,'随笔','').length,1);
+  const json=JSON.stringify({format:'RebelRoutine',exportedAt:230,state:detached});
+  assert.deepEqual(plain(E.readBackup(json).notes),plain(detached.notes));
+  const csv=E.csv(detached);assert.ok(csv.includes('"便签"'));assert.ok(csv.includes('"关联类型","关联编号","关联标题","最后修改"'));
+  for(const notes of [null,{},[...detached.notes,detached.notes[0]],
+    [{...detached.notes[0],updatedAt:0}],[{...detached.notes[0],link:{kind:'bad',id:1,title:'bad'}}]]) {
+    assert.throws(()=>E.validate({...detached,notes}));
+  }
+  await app.addTask('关联事项','',[],[],'2026-09-30');
+  const goalState=load('data/CommissionEngine').CommissionEngine.bootstrap(app.snapshot());app.adopt(goalState);
+  const before=business(app.snapshot());
+  const notes=app.actionsUI.notes;
+  notes.openFor('habit',app.habits[0].id);assert.equal(app.workspace,'notes');assert.equal(app.noteContext.kind,'habit');
+  notes.edit();assert.equal(app.noteLink.id,app.habits[0].id);app.noteBody='针对这件事的思考';
+  await notes.save();assert.equal(app.notes.length,1);assert.equal(app.noteEditing,false);
+  assert.equal(business(app.snapshot()),before); // No points, completion, progress or ledger settlement.
+  notes.edit(app.notes[0]);app.noteBody+='\n未保存修改';assert.equal(app.onBackPress(),true);
+  assert.equal(app.pendingConfirm,'note-discard');app.pendingConfirm='';assert.equal(app.noteEditing,true);
+  const durable=JSON.stringify(app.notes);app.store.saveSnapshot=async()=>{throw Error('disk failure')};
+  await notes.save();assert.equal(app.noteEditing,true);assert.equal(JSON.stringify(app.notes),durable);
+  assert.ok(app.noteBody.includes('未保存修改'));assert.ok(app.noteError.includes('disk failure'));
+  app.store.saveSnapshot=async s=>E.validate(s);await notes.save();assert.equal(app.noteEditing,false);
+  notes.edit(app.notes[0]);notes.requestClose();assert.equal(app.noteEditing,false); // No prompt for unchanged content.
+  notes.edit();app.noteBody='新草稿';notes.requestClose();await app.actionsUI.data.confirmOperation();
+  assert.equal(app.noteEditing,false);assert.equal(app.pendingConfirm,'');assert.equal(app.notes.length,1);
+  notes.request(app.notes[0],'delete');await app.actionsUI.data.confirmOperation();assert.ok(app.notes[0].deletedAt);
+  await notes.restore(app.notes[0]);assert.equal(app.notes[0].deletedAt,undefined);
+  notes.selectSection('便签');assert.equal(app.recordSection,'便签');app.switchPage('记录');assert.equal(app.recordSection,'行动');
+  app.closeWorkspace();notes.edit();assert.equal(app.noteLink,undefined);app.noteBody='自由随笔';await notes.save();
+  assert.equal(app.notes.length,2);assert.equal(business(app.snapshot()),before);
+  notes.edit(app.notes[1]);app.noteLinkPicking=true;assert.equal(app.onBackPress(),true);
+  assert.equal(app.noteLinkPicking,false);assert.equal(app.noteEditing,true);
+  console.log('PASS: note CRUD, multi-links, independent writing, source deletion, stale edit, search, backups/CSV, draft exit/failure and no growth/progress changes.');
+})().catch(error=>{console.error(error);process.exitCode=1});

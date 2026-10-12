@@ -1,0 +1,7 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "Rebel Routine entry module." },
+    { "name": "EntryAbility_desc", "value": "Rebel Routine main ability." },
+    { "name": "EntryAbility_label", "value": "REBEL ROUTINE" }
+  ]
+}
