@@ -4,6 +4,8 @@
 
 使用支持 HarmonyOS API 24 的 DevEco Studio，安装 `6.1.1(24)` SDK。项目采用 Stage 模型，Hvigor 与 OHPM 工程模型版本为 `6.1.1`。建议使用 DevEco Studio 随附的 Node 和构建工具。
 
+2026-10-12 的本机构建与测试使用随 DevEco Studio 提供的 Node.js `18.20.1`；这是已验证的环境记录，并非独立指定的 Node 版本要求。
+
 ```powershell
 git clone https://github.com/Ryuuson/RebelRoutine.git
 cd RebelRoutine
